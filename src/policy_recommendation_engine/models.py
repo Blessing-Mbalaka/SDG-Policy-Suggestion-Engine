@@ -50,6 +50,7 @@ class PolicyGap:
 @dataclass(frozen=True)
 class PipelineResult:
     documents: tuple[ProcessedDocument, ...]
+    embedding_vectors: tuple[tuple[float, ...], ...]
     themes: tuple[Theme, ...]
     emotions_by_theme: dict[str, EmotionSignal]
     policy_gaps: tuple[PolicyGap, ...]

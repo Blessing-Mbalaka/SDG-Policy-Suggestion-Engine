@@ -21,6 +21,22 @@ class UploadTests(unittest.TestCase):
         self.assertEqual(len(documents), 1)
         self.assertEqual(documents[0].source, "forum")
 
+    def test_pdf_like_bytes_are_not_decoded_as_text(self) -> None:
+        content = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\nnot a full pdf"
+
+        with self.assertRaises(ValueError) as context:
+            documents_from_upload("broken.pdf", content)
+
+        self.assertIn("Could not read the PDF", str(context.exception))
+
+    def test_binary_text_upload_gets_clear_error(self) -> None:
+        content = b"\xe2 bad utf8"
+
+        with self.assertRaises(ValueError) as context:
+            documents_from_upload("comments.txt", content)
+
+        self.assertIn("must be UTF-8 text", str(context.exception))
+
     def test_policy_priorities_default_when_empty(self) -> None:
         priorities = parse_policy_priorities("")
 

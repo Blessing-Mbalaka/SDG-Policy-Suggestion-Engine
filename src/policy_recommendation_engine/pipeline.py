@@ -50,6 +50,7 @@ class PolicyIntelligencePipeline:
 
         return PipelineResult(
             documents=processed,
+            embedding_vectors=vectors,
             themes=themes,
             emotions_by_theme=emotions,
             policy_gaps=gaps,

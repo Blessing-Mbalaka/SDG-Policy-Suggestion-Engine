@@ -9,7 +9,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 from policy_recommendation_engine.analysis_modes import ANALYSIS_MODES, build_pipeline
+from policy_recommendation_engine.database import (
+    default_database_path,
+    get_database_summary,
+    list_analysis_runs,
+    save_pipeline_result,
+)
 from policy_recommendation_engine.models import PipelineResult
+from policy_recommendation_engine.network_graph import build_embedding_graph
 from policy_recommendation_engine.upload import documents_from_pasted_text, documents_from_upload
 
 
@@ -26,10 +33,18 @@ class PolicyEngineHandler(BaseHTTPRequestHandler):
         try:
             documents, priorities, mode = self._parse_submission()
             if not documents:
-                self._send_html(render_page(error="Add pasted text or upload a .txt, .md, or .csv file.", mode=mode))
+                self._send_html(render_page(error="Add pasted text or upload a .txt, .md, .csv, or .pdf file.", mode=mode))
                 return
             result = build_pipeline(mode).run(documents, policy_priorities=priorities)
-            self._send_html(render_page(result=result, priorities=priorities, mode=mode))
+            saved_run_id = save_pipeline_result(result, analysis_mode=mode, policy_priorities=priorities)
+            self._send_html(
+                render_page(
+                    result=result,
+                    priorities=priorities,
+                    mode=mode,
+                    saved_run_id=saved_run_id,
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - surface friendly local UI errors.
             self._send_html(render_page(error=str(exc)), status=HTTPStatus.BAD_REQUEST)
 
@@ -63,11 +78,14 @@ class PolicyEngineHandler(BaseHTTPRequestHandler):
 
     def _send_html(self, content: str, status: HTTPStatus = HTTPStatus.OK) -> None:
         encoded = content.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            return
 
 
 def parse_policy_priorities(raw: str) -> dict[str, float]:
@@ -132,9 +150,12 @@ def render_page(
     result: PipelineResult | None = None,
     priorities: dict[str, float] | None = None,
     mode: str = "lightweight",
+    saved_run_id: int | None = None,
     error: str | None = None,
 ) -> str:
     priorities_json = html.escape(json.dumps(priorities or DEFAULT_POLICY_PRIORITIES, indent=2))
+    history = list_analysis_runs(limit=12)
+    archive_summary = get_database_summary()
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -167,6 +188,9 @@ def render_page(
     label {{ display: block; font-weight: 700; margin-bottom: 8px; }}
     textarea {{ width: 100%; min-height: 210px; resize: vertical; border: 1px solid var(--line); border-radius: 6px; padding: 12px; font: inherit; }}
     input[type="file"] {{ width: 100%; border: 1px dashed var(--line); padding: 14px; border-radius: 6px; background: #fbfcfd; }}
+    .upload-meter {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }}
+    .upload-meter div {{ border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fbfcfd; }}
+    .upload-meter strong {{ display: block; font-size: 20px; }}
     .mode-list {{ display: grid; gap: 8px; }}
     .mode-option {{ border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: grid; grid-template-columns: 20px 1fr; gap: 8px; align-items: start; }}
     .mode-option input {{ margin-top: 3px; }}
@@ -175,6 +199,7 @@ def render_page(
     button:hover {{ background: var(--accent-strong); }}
     .stack {{ display: grid; gap: 16px; }}
     .hint {{ color: var(--muted); font-size: 14px; margin: 8px 0 0; line-height: 1.45; }}
+    .success {{ border-color: #a7d7c5; background: #eefaf5; color: #075e45; margin-bottom: 16px; }}
     .error {{ border-color: #f5c2bd; background: #fff4f2; color: var(--bad); margin-bottom: 16px; }}
     .results {{ display: grid; gap: 16px; margin-top: 18px; }}
     .grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }}
@@ -186,8 +211,15 @@ def render_page(
     .metric strong {{ display: block; font-size: 24px; }}
     ul {{ margin: 0; padding-left: 20px; }}
     code {{ background: #edf2f4; border-radius: 4px; padding: 2px 4px; }}
+    .history-table td:last-child {{ max-width: 360px; }}
+    .graph-wrap {{ display: grid; gap: 12px; }}
+    .embedding-graph {{ width: 100%; height: auto; min-height: 320px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfd; }}
+    .graph-node text {{ fill: #ffffff; font-size: 12px; font-weight: 700; pointer-events: none; }}
+    .graph-legend {{ display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--muted); font-size: 14px; }}
+    .graph-legend span {{ display: inline-flex; align-items: center; gap: 6px; }}
+    .graph-legend i {{ width: 12px; height: 12px; border-radius: 50%; border: 1px solid #17323a; display: inline-block; }}
     @media (max-width: 850px) {{
-      form, .grid, .metric {{ grid-template-columns: 1fr; }}
+      form, .grid, .metric, .upload-meter {{ grid-template-columns: 1fr; }}
       .top {{ align-items: flex-start; flex-direction: column; padding: 16px 0; }}
     }}
   </style>
@@ -201,16 +233,22 @@ def render_page(
   </header>
   <main class="wrap">
     {render_error(error)}
+    {render_saved_message(saved_run_id)}
     <form method="post" enctype="multipart/form-data">
       <section>
         <label for="pasted_text">Paste public comments or transcripts</label>
         <textarea id="pasted_text" name="pasted_text" placeholder="Paste one or more comments. Separate documents with a blank line."></textarea>
-        <p class="hint">Supported uploads: <code>.txt</code>, <code>.md</code>, and CSV files with a <code>text</code> column.</p>
+        <p class="hint">Supported uploads: <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, and CSV files with a <code>text</code> column.</p>
+        <div class="upload-meter" aria-live="polite">
+          <div><span class="hint">Pasted Docs</span><strong id="pasted_count">0</strong></div>
+          <div><span class="hint">Selected Files</span><strong id="file_count">0</strong></div>
+          <div><span class="hint">Estimated Input</span><strong id="total_count">0</strong></div>
+        </div>
       </section>
       <div class="stack">
         <section>
           <label for="upload">Upload data file</label>
-          <input id="upload" name="upload" type="file" accept=".txt,.md,.csv" multiple>
+          <input id="upload" name="upload" type="file" accept=".txt,.md,.csv,.pdf" multiple>
         </section>
         <section>
           <label>Analysis mode</label>
@@ -228,7 +266,35 @@ def render_page(
       </div>
     </form>
     {render_results(result)}
+    {render_history(history, archive_summary)}
   </main>
+  <script>
+    const pastedText = document.getElementById("pasted_text");
+    const uploadInput = document.getElementById("upload");
+    const pastedCount = document.getElementById("pasted_count");
+    const fileCount = document.getElementById("file_count");
+    const totalCount = document.getElementById("total_count");
+
+    function countPastedDocuments(value) {{
+      const trimmed = value.trim();
+      if (!trimmed) {{
+        return 0;
+      }}
+      return trimmed.split(/\\n\\s*\\n/).filter(Boolean).length;
+    }}
+
+    function updateInputCounts() {{
+      const pasted = countPastedDocuments(pastedText.value);
+      const files = uploadInput.files.length;
+      pastedCount.textContent = pasted;
+      fileCount.textContent = files;
+      totalCount.textContent = pasted + files;
+    }}
+
+    pastedText.addEventListener("input", updateInputCounts);
+    uploadInput.addEventListener("change", updateInputCounts);
+    updateInputCounts();
+  </script>
 </body>
 </html>"""
 
@@ -237,6 +303,13 @@ def render_error(error: str | None) -> str:
     if not error:
         return ""
     return f'<section class="error">{html.escape(error)}</section>'
+
+
+def render_saved_message(saved_run_id: int | None) -> str:
+    if saved_run_id is None:
+        return ""
+    database_path = html.escape(str(default_database_path()))
+    return f'<section class="success">Saved analysis run #{saved_run_id} to <code>{database_path}</code>.</section>'
 
 
 def render_results(result: PipelineResult | None) -> str:
@@ -265,6 +338,10 @@ def render_results(result: PipelineResult | None) -> str:
         {render_gaps_table(result)}
       </section>
       <section>
+        <h2>Embedding Network</h2>
+        {render_embedding_graph(result)}
+      </section>
+      <section>
         <h2>Named Entities</h2>
         {render_entities_table(result)}
       </section>
@@ -273,6 +350,72 @@ def render_results(result: PipelineResult | None) -> str:
         <ul>{''.join(f'<li>{html.escape(item)}</li>' for item in result.insights)}</ul>
       </section>
     </div>"""
+
+
+def render_embedding_graph(result: PipelineResult) -> str:
+    graph = build_embedding_graph(result)
+    edge_count = len(graph.edges)
+    node_count = len(graph.nodes)
+    return (
+        f'<p class="hint">{node_count} documents connected by {edge_count} embedding-similarity links. '
+        "Thicker lines mean stronger semantic similarity.</p>"
+        f"{graph.svg}"
+    )
+
+
+def render_history(history: list[dict[str, object]], archive_summary: dict[str, int]) -> str:
+    if not history:
+        return """
+        <section class="results">
+          <h2>Process History</h2>
+          <p class="hint">No archived analysis runs yet.</p>
+        </section>"""
+
+    rows = "".join(render_history_row(run) for run in history)
+    total_runs = archive_summary.get("analysis_runs", 0)
+    total_documents = archive_summary.get("documents", 0)
+    total_themes = archive_summary.get("themes", 0)
+    return f"""
+    <section class="results">
+      <h2>Process History</h2>
+      <section class="metric">
+        <div><span class="hint">Archived Runs</span><strong>{total_runs}</strong></div>
+        <div><span class="hint">Archived Docs</span><strong>{total_documents}</strong></div>
+        <div><span class="hint">Archived Themes</span><strong>{total_themes}</strong></div>
+      </section>
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Created</th>
+            <th>Mode</th>
+            <th>Docs</th>
+            <th>Themes</th>
+            <th>Top Themes</th>
+            <th>Insight Preview</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>"""
+
+
+def render_history_row(run: dict[str, object]) -> str:
+    themes = run.get("themes", [])
+    insights = run.get("insights", [])
+    theme_text = ", ".join(str(theme) for theme in themes) if themes else "None"
+    insight_text = " ".join(str(insight) for insight in insights) if insights else "None"
+    return (
+        "<tr>"
+        f"<td>#{run['id']}</td>"
+        f"<td>{html.escape(str(run['created_at']))}</td>"
+        f"<td>{html.escape(str(run['analysis_mode']))}</td>"
+        f"<td>{run['document_count']}</td>"
+        f"<td>{run['theme_count']}</td>"
+        f"<td>{html.escape(theme_text)}</td>"
+        f"<td>{html.escape(insight_text)}</td>"
+        "</tr>"
+    )
 
 
 def render_mode_options(selected: str) -> str:

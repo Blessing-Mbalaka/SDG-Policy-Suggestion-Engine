@@ -7,6 +7,9 @@ virtual environment. The default pipeline uses deterministic standard-library
 implementations that can later be swapped for transformer embeddings, BERTopic,
 spaCy, vector databases, or a web backend.
 
+Analysis results include a NetworkX-powered embedding similarity graph that
+connects documents with related vector representations.
+
 ## Setup
 
 ```powershell
@@ -33,9 +36,12 @@ Then open:
 http://127.0.0.1:8000
 ```
 
-The GUI supports pasted text plus `.txt`, `.md`, and `.csv` uploads. CSV files
+The GUI supports pasted text plus `.txt`, `.md`, `.pdf`, and `.csv` uploads. CSV files
 should include a `text` column and can optionally include `source`, `author`,
 and `timestamp` columns.
+
+PDF uploads use `pypdf` and work for PDFs that contain selectable text. Scanned
+image-only PDFs need OCR before upload.
 
 The GUI includes four analysis modes:
 
@@ -51,11 +57,36 @@ Install the real NLP dependencies before using spaCy or BERT modes:
 .\.venv\Scripts\python -m spacy download en_core_web_sm
 ```
 
+Install PDF support:
+
+```powershell
+.\.venv\Scripts\python -m pip install -e ".[pdf]"
+```
+
 To verify the real NLP modes:
 
 ```powershell
 .\.venv\Scripts\python scripts\smoke_nlp.py
 ```
+
+## SQLite Database
+
+The web app saves each completed analysis to:
+
+```text
+data/policy_engine.sqlite
+```
+
+The home page also shows a process history table with recent archived runs,
+document counts, top themes, and insight previews.
+
+Create the database and seed it with sample data:
+
+```powershell
+.\.venv\Scripts\python scripts\seed_database.py
+```
+
+The database code lives in `src/policy_recommendation_engine/database.py`.
 
 ## Run Tests
 

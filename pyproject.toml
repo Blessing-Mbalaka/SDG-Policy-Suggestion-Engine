@@ -11,11 +11,17 @@ readme = "README.md"
 authors = [
   { name = "Policy Recommendation Engine" }
 ]
+dependencies = [
+  "networkx>=3.6,<4",
+]
 
 [project.optional-dependencies]
 nlp = [
   "spacy>=3.8,<3.9",
   "sentence-transformers>=5.5,<6",
+]
+pdf = [
+  "pypdf>=6.4,<7",
 ]
 
 [project.scripts]
