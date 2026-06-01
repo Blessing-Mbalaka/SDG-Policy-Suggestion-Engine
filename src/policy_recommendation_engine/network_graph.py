@@ -47,7 +47,7 @@ def build_nodes(result: PipelineResult) -> tuple[GraphNode, ...]:
         nodes.append(
             GraphNode(
                 index=index,
-                label=f"Doc {index + 1}",
+                label=label_for_document(index, processed.document.metadata),
                 theme=theme_by_document.get(index, "unclustered"),
                 preview=preview,
             )
@@ -64,6 +64,20 @@ def map_document_indexes_to_themes(result: PipelineResult) -> dict[int, str]:
     return theme_by_document
 
 
+def label_for_document(index: int, metadata: dict[str, object]) -> str:
+    page_number = metadata.get("page_number")
+    block_number = metadata.get("block_number")
+    row_number = metadata.get("upload_row")
+
+    if page_number:
+        return f"Doc {index + 1} P{page_number}"
+    if block_number:
+        return f"Doc {index + 1} B{block_number}"
+    if row_number:
+        return f"Doc {index + 1} R{row_number}"
+    return f"Doc {index + 1}"
+
+
 def build_edges(result: PipelineResult, similarity_threshold: float) -> tuple[GraphEdge, ...]:
     edges: list[GraphEdge] = []
     vectors = result.embedding_vectors
@@ -71,7 +85,7 @@ def build_edges(result: PipelineResult, similarity_threshold: float) -> tuple[Gr
     for left in range(len(vectors)):
         for right in range(left + 1, len(vectors)):
             similarity = cosine_similarity(vectors[left], vectors[right])
-            if similarity >= similarity_threshold:
+            if len(vectors) <= 30 or similarity >= similarity_threshold:
                 edges.append(GraphEdge(left=left, right=right, similarity=round(similarity, 3)))
 
     if not edges and len(vectors) > 1:

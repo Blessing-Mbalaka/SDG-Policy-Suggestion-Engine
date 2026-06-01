@@ -7,3 +7,5 @@ __pycache__/
 .ruff_cache/
 data/*.sqlite
 data/*.sqlite-*
+media/uploads/*
+!media/uploads/.gitkeep

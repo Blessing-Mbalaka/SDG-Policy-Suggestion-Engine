@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
 
-from policy_recommendation_engine.upload import documents_from_pasted_text, documents_from_upload
+from policy_recommendation_engine.upload import documents_from_pasted_text, documents_from_upload, save_uploaded_file
 from policy_recommendation_engine.web import parse_analysis_mode, parse_policy_priorities
 
 
@@ -16,10 +18,30 @@ class UploadTests(unittest.TestCase):
     def test_csv_upload_reads_text_column(self) -> None:
         content = b"source,author,text\nforum,user1,Transport delays are frustrating.\n"
 
-        documents = documents_from_upload("comments.csv", content)
+        documents = documents_from_upload("comments.csv", content, saved_path="media/uploads/comments.csv")
 
         self.assertEqual(len(documents), 1)
         self.assertEqual(documents[0].source, "forum")
+        self.assertEqual(documents[0].metadata["upload_path"], "media/uploads/comments.csv")
+
+    def test_text_upload_splits_blank_line_blocks(self) -> None:
+        content = b"Water shortages are bad.\n\nHealthcare delays are scary."
+
+        documents = documents_from_upload("comments.txt", content, saved_path="media/uploads/comments.txt")
+
+        self.assertEqual(len(documents), 2)
+        self.assertEqual(documents[0].metadata["block_number"], 1)
+        self.assertEqual(documents[1].metadata["block_number"], 2)
+
+    def test_save_uploaded_file_writes_to_media_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            saved_path = save_uploaded_file("unsafe name.pdf", b"content", media_dir=temp_dir)
+
+            exists = saved_path.exists()
+            saved_name = saved_path.name
+
+        self.assertTrue(exists)
+        self.assertTrue(saved_name.endswith("unsafe_name.pdf"))
 
     def test_pdf_like_bytes_are_not_decoded_as_text(self) -> None:
         content = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\nnot a full pdf"

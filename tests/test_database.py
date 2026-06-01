@@ -24,10 +24,12 @@ class DatabaseTests(unittest.TestCase):
             initialize_database(database_path)
 
             table_names = read_table_names(database_path)
+            document_columns = read_document_columns(database_path)
 
         self.assertIn("analysis_runs", table_names)
         self.assertIn("documents", table_names)
         self.assertIn("themes", table_names)
+        self.assertIn("metadata_json", document_columns)
 
     def test_save_pipeline_result_writes_analysis_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -97,6 +99,15 @@ def read_counts(database_path: Path) -> dict[str, int]:
     finally:
         connection.close()
     return counts
+
+
+def read_document_columns(database_path: Path) -> set[str]:
+    connection = sqlite3.connect(database_path)
+    try:
+        rows = connection.execute("PRAGMA table_info(documents)").fetchall()
+    finally:
+        connection.close()
+    return {row[1] for row in rows}
 
 
 if __name__ == "__main__":

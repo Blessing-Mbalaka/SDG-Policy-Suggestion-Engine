@@ -17,7 +17,7 @@ from policy_recommendation_engine.database import (
 )
 from policy_recommendation_engine.models import PipelineResult
 from policy_recommendation_engine.network_graph import build_embedding_graph
-from policy_recommendation_engine.upload import documents_from_pasted_text, documents_from_upload
+from policy_recommendation_engine.upload import documents_from_pasted_text, documents_from_upload, save_uploaded_file
 
 
 DEFAULT_POLICY_PRIORITIES = {"water": 0.05, "healthcare": 0.2, "transport": 0.1}
@@ -61,7 +61,8 @@ class PolicyEngineHandler(BaseHTTPRequestHandler):
             pasted_text = fields.get("pasted_text", "")
             documents = list(documents_from_pasted_text(pasted_text))
             for filename, content in files:
-                documents.extend(documents_from_upload(filename, content))
+                saved_path = save_uploaded_file(filename, content)
+                documents.extend(documents_from_upload(filename, content, saved_path=saved_path))
             return (
                 tuple(documents),
                 parse_policy_priorities(fields.get("policy_priorities", "")),
@@ -358,8 +359,34 @@ def render_embedding_graph(result: PipelineResult) -> str:
     node_count = len(graph.nodes)
     return (
         f'<p class="hint">{node_count} documents connected by {edge_count} embedding-similarity links. '
-        "Thicker lines mean stronger semantic similarity.</p>"
+        "Thicker lines mean stronger semantic similarity. For up to 30 documents, every pair is shown.</p>"
         f"{graph.svg}"
+        f"{render_similarity_table(graph)}"
+    )
+
+
+def render_similarity_table(graph: object) -> str:
+    edges = graph.edges[:15]
+    if not edges:
+        return '<p class="hint">Upload at least two document sections to calculate pairwise cosine similarity.</p>'
+
+    nodes_by_index = {node.index: node for node in graph.nodes}
+    rows = ""
+    for edge in edges:
+        left = nodes_by_index[edge.left]
+        right = nodes_by_index[edge.right]
+        rows += (
+            "<tr>"
+            f"<td>{html.escape(left.label)}</td>"
+            f"<td>{html.escape(right.label)}</td>"
+            f"<td>{edge.similarity:.3f}</td>"
+            "</tr>"
+        )
+    return (
+        "<table>"
+        "<thead><tr><th>Node A</th><th>Node B</th><th>Cosine Similarity</th></tr></thead>"
+        f"<tbody>{rows}</tbody>"
+        "</table>"
     )
 
 

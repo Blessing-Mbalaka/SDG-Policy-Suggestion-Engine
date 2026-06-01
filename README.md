@@ -43,6 +43,16 @@ and `timestamp` columns.
 PDF uploads use `pypdf` and work for PDFs that contain selectable text. Scanned
 image-only PDFs need OCR before upload.
 
+Uploaded source files are copied to:
+
+```text
+media/uploads/
+```
+
+Text and Markdown uploads are split into separate graph nodes by blank lines.
+PDF uploads are split into one graph node per readable page, so the embedding
+network can compare sections of the same upload as well as multiple uploads.
+
 The GUI includes four analysis modes:
 
 - Fast local NLP: dependency-light tokenizer, hashed embeddings, and emotion lexicons.

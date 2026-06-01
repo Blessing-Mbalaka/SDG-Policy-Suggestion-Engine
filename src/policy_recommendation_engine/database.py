@@ -21,6 +21,7 @@ def initialize_database(database_path: str | Path | None = None) -> Path:
     try:
         connection.execute("PRAGMA foreign_keys = ON")
         create_tables(connection)
+        ensure_document_metadata_column(connection)
         connection.commit()
     finally:
         connection.close()
@@ -53,6 +54,7 @@ def create_tables(connection: sqlite3.Connection) -> None:
             normalized_text TEXT NOT NULL,
             tokens_json TEXT NOT NULL,
             named_entities_json TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
             FOREIGN KEY (run_id) REFERENCES analysis_runs (id) ON DELETE CASCADE
         )
         """
@@ -70,6 +72,13 @@ def create_tables(connection: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+def ensure_document_metadata_column(connection: sqlite3.Connection) -> None:
+    rows = connection.execute("PRAGMA table_info(documents)").fetchall()
+    column_names = {row[1] for row in rows}
+    if "metadata_json" not in column_names:
+        connection.execute("ALTER TABLE documents ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS emotions (
@@ -252,9 +261,10 @@ def save_documents(connection: sqlite3.Connection, run_id: int, result: Pipeline
                 raw_text,
                 normalized_text,
                 tokens_json,
-                named_entities_json
+                named_entities_json,
+                metadata_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -265,6 +275,7 @@ def save_documents(connection: sqlite3.Connection, run_id: int, result: Pipeline
                 processed.normalized_text,
                 json.dumps(processed.tokens),
                 json.dumps(processed.named_entities),
+                json.dumps(document.metadata, sort_keys=True),
             ),
         )
 
