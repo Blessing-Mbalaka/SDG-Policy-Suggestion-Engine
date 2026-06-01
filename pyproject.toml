@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "policy-recommendation-engine"
+version = "0.1.0"
+description = "Modular contextual policy intelligence prototype"
+requires-python = ">=3.12,<3.15"
+readme = "README.md"
+authors = [
+  { name = "Policy Recommendation Engine" }
+]
+
+[project.optional-dependencies]
+nlp = [
+  "spacy>=3.8,<3.9",
+  "sentence-transformers>=5.5,<6",
+]
+
+[project.scripts]
+policy-engine = "policy_recommendation_engine.cli:main"
+policy-engine-web = "policy_recommendation_engine.web:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
